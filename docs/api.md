@@ -1,8 +1,8 @@
 # API reference
 
 Import the library surface from `src/index.ts`. Source imports end in `.ts`;
-the build rewrites those imports to `.js`. Queue methods are synchronous.
-Only the worker and polling helpers return promises.
+the build rewrites those imports to `.js`. `QueueClient` methods are synchronous.
+The buffered producer, worker, and polling helpers provide asynchronous operations.
 
 ## Connections
 
@@ -65,6 +65,83 @@ const submitted = client.enqueueMany([
   { queue: "reports", kind: "export", payload: { month: "2026-11" } },
 ]);
 ```
+
+### Buffered submissions
+
+Use `new BufferedProducer(client, options?)` when independent callers send
+bursts of jobs through one long-lived client. The producer combines calls
+into bounded batches and writes each batch with `client.enqueueMany()`.
+The existing synchronous client methods are still available.
+
+```ts
+const producer = new BufferedProducer(client, {
+  batchSize: 32,
+  maxPending: 256,
+  lingerMs: 8,
+});
+
+const results = await Promise.all([
+  producer.enqueue({ queue: "reports", kind: "export", payload: { region: "west" } }),
+  producer.enqueue({ queue: "reports", kind: "export", payload: { region: "east" } }),
+]);
+```
+
+`producer.enqueue(input)` validates and snapshots the input and returns a
+promise. It resolves to the usual `{ jobId, inserted }` only after the write
+succeeds. An explicit `availableAt` is kept; otherwise the job becomes
+available as of the successful write. Callers must handle promise rejections.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `batchSize` | `50` | Jobs per write transaction; 1–200 |
+| `maxPending` | `1000` | Outstanding jobs, including the active batch; `batchSize`–10,000 |
+| `lingerMs` | `10` | Milliseconds to wait for a partial batch; 0–60,000 |
+| `retry.maxRetries` | `3` | Additional attempts on SQLite busy; 0–10 |
+| `retry.initialDelayMs` | `10` | First retry delay in milliseconds; 0–60,000 |
+| `retry.maxDelayMs` | `250` | Retry delay cap; at least the initial delay and at most 60,000 |
+
+A full batch is scheduled immediately. A partial batch normally waits for
+the linger window, rather than resetting that window on every new arrival.
+Calls over the pending limit reject with `QueueError` code `producer-full`;
+there is no automatic admission retry. Keep payloads small and handle
+admission pressure in the producer's caller.
+
+Only a SQLite busy response is retried. The same batch is attempted again
+after a delay, which doubles up to the configured cap. Later batches do not
+overtake it. If the writer fails permanently or runs out of retries, each
+request in that batch rejects with the storage error. Later submissions can
+still complete. The application must decide which failures to resubmit.
+
+#### Flush, shutdown, and statistics
+
+`flush()` expedites dispatch and waits for outstanding submissions accepted
+before the call. It reports `{ accepted, inserted, reused, failed }` for
+that group. Later submissions are not counted, even if they happen to be
+written in the same transaction. The summary counts failures rather than
+throwing them; the individual enqueue promises retain their errors.
+
+`close()` stops accepting new work immediately, drains accepted work, and
+returns the same flush summary. Repeated calls share the original close
+promise. The producer doesn't close the underlying connection. Stop the
+producer first, then close the client when its other users are also done.
+
+`getStats()` returns a snapshot: `queued` and `inFlight` are current counts;
+`accepted`, `inserted`, `reused`, `failed`, `dispatchedBatches`, and `retries`
+are cumulative. A request rejected at admission is not `accepted` and does
+not increment `failed`. `state` is `open`, `closing`, or `closed`.
+
+#### Scheduling and durability
+
+The default scheduler uses Node timers. Tests can supply a `schedule(delayMs,
+run)` function that returns a cancellation function. The callback must be
+deferred, including for a zero delay. This scheduler controls dispatch, not
+the Unix clock used by the database for job timestamps.
+
+The buffer is in memory. If the process exits before an enqueue promise
+resolves, the caller should treat the outcome as uncertain. Use a stable
+idempotency key for replay-safe jobs. SQLite writes still run synchronously
+when a batch is dispatched; buffering reduces write transactions but does
+not move SQLite work off the event loop.
 
 ## Job lifecycle
 

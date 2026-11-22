@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "example": "node --disable-warning=ExperimentalWarning examples/demo.ts",
     "example:reports": "node --disable-warning=ExperimentalWarning examples/report-pipeline.ts",
+    "example:producer": "node --disable-warning=ExperimentalWarning examples/buffered-producer.ts",
     "queue": "node --disable-warning=ExperimentalWarning src/cli.ts"
   },
   "devDependencies": {
