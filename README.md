@@ -65,12 +65,18 @@ Use a file path instead of `:memory:` when producers and workers need to share
 state. For a file-backed example with two processing stages and a transient
 delivery failure, run `npm run example:reports`.
 
+For producer bursts, `BufferedProducer` can batch independent submissions into
+fewer write transactions. Run `npm run example:producer` to see the per-job
+results alongside the producer's batch statistics. See the API reference for
+admission limits and shutdown behavior.
+
 ## Repository map
 
 | Area | Responsibility |
 | --- | --- |
 | `src/index.ts`, `src/model.ts` | Public exports, input and result types |
 | `src/client.ts`, `src/validate.ts` | Client operations and input validation |
+| `src/producer.ts` | Buffered submissions, backpressure, and SQLite busy retries |
 | `src/sqlite/` | Schema, transactions, storage queries, row decoding |
 | `src/worker.ts`, `src/scheduler.ts` | Handler execution, batch processing, polling |
 | `src/clock.ts`, `src/retry.ts`, `src/events.ts` | Time, retry policy, event vocabulary |

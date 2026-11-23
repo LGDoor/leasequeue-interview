@@ -1,6 +1,7 @@
 export type QueueErrorCode =
   | "invalid-input"
   | "closed"
+  | "producer-full"
   | "invalid-schema"
   | "invalid-data";
 

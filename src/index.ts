@@ -28,6 +28,15 @@ export type {
   RetryDeadOptions,
   RetryPolicy,
 } from "./model.ts";
+export { BufferedProducer } from "./producer.ts";
+export type {
+  BufferedProducerOptions,
+  ProducerFlushResult,
+  ProducerRetryOptions,
+  ProducerScheduler,
+  ProducerState,
+  ProducerStats,
+} from "./producer.ts";
 export { poll } from "./scheduler.ts";
 export type { PollOptions, PollResult, Wait } from "./scheduler.ts";
 export { Worker } from "./worker.ts";

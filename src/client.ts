@@ -38,9 +38,12 @@ export type OpenQueueOptions = {
   busyTimeoutMs?: number;
 };
 
+const maxCachedEnqueues = 256;
+
 export class QueueClient {
   private readonly store: SqliteStore;
   private readonly clock: Clock;
+  private readonly recentEnqueues = new Map<string, string>();
   private closed = false;
 
   constructor(filename: string, options: OpenQueueOptions = {}) {
@@ -57,6 +60,7 @@ export class QueueClient {
   close(): void {
     if (!this.closed) {
       this.store.close();
+      this.recentEnqueues.clear();
       this.closed = true;
     }
   }
@@ -72,7 +76,24 @@ export class QueueClient {
 
   enqueue(input: EnqueueInput): EnqueueResult {
     const now = this.now();
-    return this.store.enqueue(normalizeEnqueue(input, now), now);
+    const normalized = normalizeEnqueue(input, now);
+    const key = normalized.idempotencyKey;
+    if (key === null) return this.store.enqueue(normalized, now);
+
+    const cached = this.recentEnqueues.get(key);
+    if (cached !== undefined) return { jobId: cached, inserted: false };
+
+    const result = this.store.enqueue(normalized, now);
+    this.rememberEnqueue(key, result.jobId);
+    return result;
+  }
+
+  private rememberEnqueue(key: string, jobId: string): void {
+    if (this.recentEnqueues.size >= maxCachedEnqueues) {
+      const oldest = this.recentEnqueues.keys().next();
+      if (!oldest.done) this.recentEnqueues.delete(oldest.value);
+    }
+    this.recentEnqueues.set(key, jobId);
   }
 
   enqueueMany(inputs: readonly EnqueueInput[]): EnqueueResult[] {

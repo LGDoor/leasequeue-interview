@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { describe, test } from "node:test";
 import { leaseRef } from "../src/index.ts";
 import { claim, disk, hasCode, input, memory } from "./helpers.ts";
@@ -90,6 +91,25 @@ describe("enqueue", () => {
 
     assert.deepEqual(duplicate, { jobId: first.jobId, inserted: false });
     assert.equal(replica.status("reports").ready, 1);
+  });
+
+  test("replays a recent submission without waiting for a writer lock", (t) => {
+    const { filename, open } = disk(t);
+    const producer = open({ busyTimeoutMs: 0 });
+    const request = input({ idempotencyKey: "nightly-export" });
+    const first = producer.enqueue(request);
+    const writer = new DatabaseSync(filename);
+
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      assert.deepEqual(producer.enqueue(request), { jobId: first.jobId, inserted: false });
+      assert.throws(() => producer.enqueue(input()), /database is locked/);
+    } finally {
+      writer.close();
+    }
+
+    assert.equal(producer.status("reports").ready, 1);
+    assert.equal(producer.readEvents({ jobId: first.jobId }).length, 1);
   });
 
   test("keeps idempotency associations after losing the original worker", (t) => {
