@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { TestContext } from "node:test";
 import { openQueue, QueueError } from "../src/index.ts";
 import type {
@@ -44,11 +45,12 @@ export function disk(t: TestContext, start?: number) {
   const directory = mkdtempSync(join(tmpdir(), "leasequeue-test-"));
   const filename = join(directory, "queue.sqlite");
   const clock = fakeClock(start);
-  const clients: QueueClient[] = [];
+  const closeConnections: (() => void)[] = [];
 
   t.after(() => {
-    for (const client of clients.reverse()) {
-      client.close();
+    // Close every SQLite handle before removing files; Windows cannot unlink open databases.
+    for (const close of closeConnections.reverse()) {
+      close();
     }
     rmSync(directory, { recursive: true, force: true });
   });
@@ -58,8 +60,15 @@ export function disk(t: TestContext, start?: number) {
     clock,
     open(options: OpenQueueOptions = {}) {
       const client = openQueue(filename, { clock, ...options });
-      clients.push(client);
+      closeConnections.push(() => client.close());
       return client;
+    },
+    inspect() {
+      const database = new DatabaseSync(filename);
+      closeConnections.push(() => {
+        if (database.isOpen) database.close();
+      });
+      return database;
     },
   };
 }

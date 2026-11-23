@@ -1,18 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { DatabaseSync } from "node:sqlite";
 import { describe, test } from "node:test";
-import type { TestContext } from "node:test";
 import { promisify } from "node:util";
 import { leaseRef, openQueue } from "../src/index.ts";
 import type { EnqueueResult, JsonObject, QueueEvent } from "../src/index.ts";
 import { claim, disk, hasCode, input, memory } from "./helpers.ts";
-
-function inspect(context: TestContext, filename: string): DatabaseSync {
-  const database = new DatabaseSync(filename);
-  context.after(() => database.close());
-  return database;
-}
 
 function eventSummary(events: QueueEvent[]) {
   return events.map(({ name, occurredAt, details }) => ({ name, occurredAt, details }));
@@ -127,13 +119,13 @@ describe("durable state", () => {
 
 describe("database setup and transaction boundaries", () => {
   test("upgrades an earlier database without rewriting existing jobs", (context) => {
-    const { filename, open } = disk(context);
+    const { open, inspect } = disk(context);
     const initial = open();
     const { jobId } = initial.enqueue(input({ priority: 9, idempotencyKey: "archive" }));
     const before = initial.get(jobId);
     initial.close();
 
-    const database = inspect(context, filename);
+    const database = inspect();
     database.exec(`
       DROP TABLE queue_events;
       DROP TABLE queue_settings;
@@ -156,8 +148,8 @@ describe("database setup and transaction boundaries", () => {
   });
 
   test("rejects a database that is newer than this library without downgrading it", (context) => {
-    const { filename, open } = disk(context);
-    const database = inspect(context, filename);
+    const { open, inspect } = disk(context);
+    const database = inspect();
     database.exec("CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep'); PRAGMA user_version = 9000");
 
     assert.throws(() => open(), hasCode("invalid-schema", /9000/));
@@ -167,8 +159,8 @@ describe("database setup and transaction boundaries", () => {
   });
 
   test("rolls back an incomplete migration and leaves its previous version intact", (context) => {
-    const { filename, open } = disk(context);
-    const database = inspect(context, filename);
+    const { open, inspect } = disk(context);
+    const database = inspect();
     database.exec("CREATE TABLE queue_events (unrelated TEXT)");
 
     assert.throws(() => open(), /queue_events.*already exists/);
@@ -181,10 +173,10 @@ describe("database setup and transaction boundaries", () => {
   });
 
   test("a journal write failure rolls back the entire producer batch", (context) => {
-    const { filename, open } = disk(context);
+    const { open, inspect } = disk(context);
     const writer = open();
     const observer = open();
-    const database = inspect(context, filename);
+    const database = inspect();
     database.exec(`
       CREATE TRIGGER reject_selected_job_event BEFORE INSERT ON queue_events
       WHEN json_extract(NEW.details_json, '$.kind') = 'reject'
@@ -206,10 +198,10 @@ describe("database setup and transaction boundaries", () => {
   });
 
   test("a rejected claim event leaves the job available and the attempt unspent", (context) => {
-    const { filename, open } = disk(context);
+    const { open, inspect } = disk(context);
     const queue = open();
     const { jobId } = queue.enqueue(input());
-    const database = inspect(context, filename);
+    const database = inspect();
     database.exec(`
       CREATE TRIGGER reject_claim_event BEFORE INSERT ON queue_events
       WHEN NEW.event_name = 'claimed'
@@ -228,9 +220,9 @@ describe("database setup and transaction boundaries", () => {
   });
 
   test("recognizes lock contention and can write once the other transaction ends", (context) => {
-    const { filename, open } = disk(context);
+    const { open, inspect } = disk(context);
     const queue = open({ busyTimeoutMs: 0 });
-    const database = inspect(context, filename);
+    const database = inspect();
     database.exec("BEGIN IMMEDIATE");
 
     try {

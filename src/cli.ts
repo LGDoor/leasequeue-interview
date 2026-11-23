@@ -1,4 +1,5 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { openQueue, QueueError } from "./index.ts";
 import type { EnqueueInput, JobStatus, JsonValue, QueueClient, RetryPolicy } from "./index.ts";
@@ -310,7 +311,8 @@ export function runCli(args: readonly string[], output: CliOutput): number {
   }
 }
 
-if (import.meta.main) {
+// Node 24.2 can report main as false for a TypeScript entry point.
+if (import.meta.main || (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url)) {
   process.exitCode = runCli(process.argv.slice(2), {
     stdout: (message) => process.stdout.write(`${message}\n`),
     stderr: (message) => process.stderr.write(`${message}\n`),

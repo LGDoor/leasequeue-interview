@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, truncateSync, writeFileSync } from "node:fs";
+import { cp } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
@@ -270,6 +271,23 @@ describe("process entry point", () => {
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
     assert.match(result.stderr, /missing --queue/);
+  });
+
+  test("runs from a path containing spaces and Unicode", async (context) => {
+    const { filename } = disk(context);
+    const source = join(dirname(filename), "source space 测试");
+    await cp(new URL("../src/", import.meta.url), source, { recursive: true });
+    const result = spawnSync(process.execPath, [
+      "--disable-warning=ExperimentalWarning", join(source, cli.endsWith(".ts") ? "cli.ts" : "cli.js"),
+      "status", "--db", filename, "--queue", "reports",
+    ], { encoding: "utf8" });
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    const status = JSON.parse(result.stdout) as QueueStatus;
+    assert.equal(status.queue, "reports");
+    assert.equal(status.counts.queued, 0);
   });
 });
 
